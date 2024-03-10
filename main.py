@@ -1,7 +1,12 @@
+from time import sleep
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_mqtt.config import MQTTConfig
 from fastapi_mqtt.fastmqtt import FastMQTT
+import predictions as pred
+import weather
+import threading
 
 app = FastAPI()
 
@@ -32,108 +37,53 @@ mqtt = FastMQTT(config=mqtt_config)
 
 mqtt.init_app(app)
 
-temperature = list()
-pressure = list()
-soil_moisture = list()
-light_intensity = list()
-uv_intensity = list()
-mq2 = list()
-mq135 = list()
+data = []
 
-''' /esp1/temp '''
-@mqtt.on_connect()
+def process_data(payload):
+    d = list(map(float, payload.decode('utf-8').split()))
+    cloud_cover, solar_radiation = pred.weather_prediction(d[0], d[1])
+    N, P, K = pred.NPK_prediction(d[0], d[1])
+    weather_pre = weather.weather_predict(d[0], d[1])
+    data.append({
+        "temperature": d[0],
+        "humidity": d[1],
+        "soil_moisture": d[2],
+        "light_intensity": d[3],
+        "uv_intensity": d[4],
+        "mq2_val": d[5],
+        "mq135_val": d[6],
+        "cloudcover": cloud_cover[0],
+        "weather": weather_pre[0],
+        "solarradiation": solar_radiation[0],
+        "N": N[0],
+        "P": P[0],
+        "K": K[0]
+    })
+
+def process_payload(payload):
+    threading.Thread(target=process_data, args=(payload,)).start()
+
+''' /esp '''
 def connect(client, flags, rc, properties):
-    mqtt.client.subscribe("/esp1/temp") #subscribing mqtt topic
+    mqtt.client.subscribe("/esp") #subscribing mqtt topic
+    print("Connected")
 
 @mqtt.on_message()
 async def message(client, topic, payload, qos, properties):
-    temperature.append(payload.decode('utf-8'))
+    try:
+        process_payload(payload)
 
-@mqtt.subscribe("/esp1/temp")
+    except Exception as e:
+        print(e)
+
+@mqtt.subscribe("/esp")
 async def message_from_topic(client, topic, payload, qos, properties):
-    temperature.append(payload.decode('utf-8'))
+    try:
+        process_payload(payload)
+        sleep(1)
+    except Exception as e:
+        print(e)
 
-''' /esp1/pressure '''
-@mqtt.on_connect()
-def connect(client, flags, rc, properties):
-    mqtt.client.subscribe("/esp1/pressure")
-
-@mqtt.on_message()
-async def message(client, topic, payload, qos, properties):
-    pressure.append(payload.decode('utf-8'))
-
-@mqtt.subscribe("/esp1/pressure")
-async def message_from_topic(client, topic, payload, qos, properties):
-    pressure.append(payload.decode('utf-8'))
-
-''' /esp1/soil_moisture '''
-@mqtt.on_connect()
-def connect(client, flags, rc, properties):
-    mqtt.client.subscribe("/esp1/soil_moisture")
-
-@mqtt.on_message()
-async def message(client, topic, payload, qos, properties):
-    soil_moisture.append(payload.decode('utf-8'))
-
-@mqtt.subscribe("/esp1/soil_moisture")
-async def message_from_topic(client, topic, payload, qos, properties):
-    soil_moisture.append(payload.decode('utf-8'))
-
-''' /esp1/light_intensity '''
-@mqtt.on_connect()
-def connect(client, flags, rc, properties):
-    mqtt.client.subscribe("/esp1/light_intensity")
-
-@mqtt.on_message()
-async def message(client, topic, payload, qos, properties):
-    light_intensity.append(payload.decode('utf-8'))
-
-@mqtt.subscribe("/esp1/light_intensity")
-async def message_from_topic(client, topic, payload, qos, properties):
-    light_intensity.append(payload.decode('utf-8'))
-
-''' /esp1/uv_intensity '''
-@mqtt.on_connect()
-def connect(client, flags, rc, properties):
-    mqtt.client.subscribe("/esp1/uv_intensity")
-
-@mqtt.on_message()
-async def message(client, topic, payload, qos, properties):
-    uv_intensity.append(payload.decode('utf-8'))
-
-@mqtt.subscribe("/esp1/uv_intensity")
-async def message_from_topic(client, topic, payload, qos, properties):
-    uv_intensity.append(payload.decode('utf-8'))
-
-''' /esp1/mq2 '''
-@mqtt.on_connect()
-def connect(client, flags, rc, properties):
-    mqtt.client.subscribe("/esp1/mq2")
-
-@mqtt.on_message()
-async def message(client, topic, payload, qos, properties):
-    mq2.append(payload.decode('utf-8'))
-
-@mqtt.subscribe("/esp1/mq2")
-async def message_from_topic(client, topic, payload, qos, properties):
-    mq2.append(payload.decode('utf-8'))
-
-''' /esp1/mq135 '''
-@mqtt.on_connect()
-def connect(client, flags, rc, properties):
-    mqtt.client.subscribe("/esp1/mq135")
-
-@mqtt.on_message()
-async def message(client, topic, payload, qos, properties):
-    mq135.append(payload.decode('utf-8'))
-
-@mqtt.subscribe("/esp1/mq135")
-async def message_from_topic(client, topic, payload, qos, properties):
-    mq135.append(payload.decode('utf-8'))
-
-''' ------------------------------------------------------ '''
-
-''' Connect and Disconnect events are not working properly '''
 @mqtt.on_disconnect()
 def disconnect(client, packet, exc=None):
     return
@@ -147,30 +97,7 @@ def subscribe(client, mid, qos, properties):
 def root():
     return {"Hello": "World"}
 
-@app.get("/temperature")
-async def get_temperature():
-    return {"temperature": temperature}
-
-@app.get("/pressure")
-async def get_pressure():
-    return {"pressure": pressure}
-
-@app.get("/soil_moisture")
-async def get_soil_moisture():
-    return {"soil_moisture": soil_moisture}
-
-@app.get("/light_intensity")
-async def get_light_intensity():
-    return {"light_intensity": light_intensity}
-
-@app.get("/uv_intensity")
-async def get_uv_intensity():
-    return {"uv_intensity": uv_intensity}
-
-@app.get("/mq2")
-async def get_mq2():
-    return {"mq2": mq2}
-
-@app.get("/mq135")
-async def get_mq135():
-    return {"mq135": mq135}
+@app.get("/data")
+async def get_data():
+    global data  # Add this line to access the global variable 'data'
+    return data
